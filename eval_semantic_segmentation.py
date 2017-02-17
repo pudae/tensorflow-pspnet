@@ -3,6 +3,8 @@ from __future__ import division
 from __future__ import print_function
 
 import math
+
+import numpy as np
 import tensorflow as tf
 
 from datasets import dataset_factory
@@ -45,7 +47,25 @@ tf.app.flags.DEFINE_string(
 tf.app.flags.DEFINE_integer(
     'eval_image_size', None, 'Eval image size')
 
+tf.app.flags.DEFINE_string(
+    'classes', None,
+    'The classes to classify.')
+
 FLAGS = tf.app.flags.FLAGS
+
+
+def _get_label_mapping_tensor(classes, num_classes):
+  tbl = np.zeros(num_classes + 1)
+  for i, c in enumerate(classes):
+    tbl[c] = i + 1
+  return tf.constant(tbl, dtype=tf.int32)
+
+
+def _filter_classes(labels, mapping):
+  if mapping is None:
+    return labels
+
+  return tf.gather(mapping, labels)
 
 
 def main(_):
@@ -62,12 +82,19 @@ def main(_):
     dataset = dataset_factory.get_dataset(
         FLAGS.dataset_name, FLAGS.dataset_split_name, FLAGS.dataset_dir)
 
+    num_classes = dataset.num_classes
+    class_map = None
+    if FLAGS.classes is not None:
+      classes = [int(c) for c in FLAGS.classes.split(',')]
+      class_map = _get_label_mapping_tensor(classes, dataset.num_classes)
+      num_classes = len(classes) + 1
+
     ####################
     # Select the model #
     ####################
     network_fn = nets_factory.get_network_fn(
         FLAGS.model_name,
-        num_classes=dataset.num_classes,
+        num_classes=num_classes,
         is_training=False)
 
     ##############################################################
@@ -98,6 +125,7 @@ def main(_):
         batch_size=FLAGS.batch_size,
         num_threads=FLAGS.num_preprocessing_threads,
         capacity=5 * FLAGS.batch_size)
+    labels = _filter_classes(labels, class_map)
 
     ####################
     # Define the model #
@@ -112,8 +140,7 @@ def main(_):
     # Define the metrics:
     names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
         'Pixel ACC': slim.metrics.streaming_accuracy(predictions, labels),
-        'IOU': slim.metrics.streaming_mean_iou(predictions, labels,
-                                               dataset.num_classes),
+        'IOU': slim.metrics.streaming_mean_iou(predictions, labels, num_classes),
     })
 
     # Print the summaries to screen.
