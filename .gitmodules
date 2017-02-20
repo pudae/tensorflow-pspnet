@@ -1,3 +1,6 @@
 [submodule "thirdparty/models"]
 	path = thirdparty/models
 	url = https://github.com/tensorflow/models.git
+[submodule "serving"]
+	path = serving
+	url = https://github.com/tensorflow/serving.git
