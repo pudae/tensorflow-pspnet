@@ -25,7 +25,11 @@ tf.app.flags.DEFINE_string(
     'model_name', 'pspnet_v1_50', 'The name of the architecture to evaluate.')
 
 tf.app.flags.DEFINE_string(
-    'image', None, 'Test image')
+    'output_dir', 'model', 'The directory where the protobuf be written')
+
+tf.app.flags.DEFINE_string(
+    'output_filename', 'pspnet_v1_50.pb', 'The filename of the protobuf')
+
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -88,26 +92,19 @@ def main(_):
     #####################################
     # Select the preprocessing function #
     #####################################
-    input_image_ori = scipy.misc.imread(FLAGS.image)
-    H, W = input_image_ori.shape[0], input_image_ori.shape[1]
-    input_image = scipy.misc.imresize(input_image_ori, (224, 224))
-    print('image.shape:', input_image.shape)
-
-    image_X = tf.placeholder(tf.float32, input_image.shape, name='ph_input_x')
+    image_X = tf.placeholder(tf.float32, (224, 224, 3), name='ph_input_x')
     image = _mean_image_subtraction(image_X, [_R_MEAN, _G_MEAN, _B_MEAN])
     images = tf.expand_dims(image, axis=[0])
 
     ####################
     # Define the model #
     ####################
-    logits, _ = network_fn(images)
+    logits, ep = network_fn(images)
     variables_to_restore = slim.get_variables_to_restore()
 
-    # predictions = tf.argmax(logits, 1)
-    predictions = tf.argmax(logits, 3, name='predictions')
-
-    print('logits:', logits.get_shape())
-    # print('predictions:', predictions.get_shape())
+    softmax = tf.nn.softmax(logits, name='softmax2')
+    softmax = tf.reshape(softmax, shape=(-1,224,224,2), name='softmax')
+    predictions = tf.argmax(softmax, 3, name='predictions')
 
     if tf.gfile.IsDirectory(FLAGS.checkpoint_path):
       checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
@@ -128,16 +125,9 @@ def main(_):
     saver.restore(sess, checkpoint_path)
 
     g2 = tf.graph_util.convert_variables_to_constants(sess, g.as_graph_def(),
-                                                      ['predictions'])
-    #for v in tf.trainable_variables():
-    #  tensor = tf.constant(sess.run(v))
-    #  tf.assign(v, tensor, name='const_weight')
+                                                      ['softmax', 'predictions'])
 
-    #tf.train.write_graph(sess.graph_def, './train', 'skynet_v1_50_graph.pb', as_text=False)
-    tf.train.write_graph(g2, './train', 'skynet_v1_50_graph.pb', as_text=False)
-
-    # logits = tf.image.resize_images(logits, (H, W))
-    #logit = sess.run(logits, feed_dict={image_X: input_image})[0]
+    tf.train.write_graph(g2, FLAGS.output_dir, FLAGS.output_filename, as_text=False)
 
 
 if __name__ == '__main__':

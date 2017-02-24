@@ -4,12 +4,21 @@
    </head>
    <body>
      <ul>
-       Upload a image to process.
+       Upload image
      </ul>
      <br />
      <form enctype="multipart/form-data" action="{{ request.path }}", method="post">
        <input type="file", name="image" />
-       <input type="submit", name="upload" />
+       <input type="submit", name="segmentation" />
+     </form>
+     <br />
+     <ul>
+       Input image url
+     </ul>
+     <br />
+     <form enctype='application/x-www-form-urlencoded' action="{{ request.path }}" method="post">
+       <input type="text", name="url" />
+       <input type="submit" />
      </form>
    </body>
  </html>
