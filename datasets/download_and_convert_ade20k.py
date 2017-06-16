@@ -12,7 +12,7 @@ import tensorflow as tf
 from six.moves import urllib
 
 # The URL where the ADE20k data can be downloaded.
-_DATA_URL = 'http://sceneparsing.csail.mit.edu/data/ADEChallengeData2016.zip'
+_DATA_URL = 'http://data.csail.mit.edu/places/ADEchallenge/ADEChallengeData2016.zip'
 
 # The number of shards per dataset split.
 _NUM_SHARDS = 20
@@ -46,6 +46,8 @@ def download_and_uncompress_zip(zip_url, dataset_dir):
     print('Extracting ', filepath)
     f.extractall(dataset_dir)
     print('Successfully extracted')
+
+  return os.path.splitext(filepath)[0]
 
 
 class ImageReader(object):
@@ -169,10 +171,11 @@ def run(dataset_dir):
   if not tf.gfile.Exists(dataset_dir):
     tf.gfile.MakeDirs(dataset_dir)
 
-  download_and_uncompress_zip(_DATA_URL, dataset_dir)
+  extracted_dir = download_and_uncompress_zip(_DATA_URL, dataset_dir)
+  print(extracted_dir)
 
-  image_dir      = os.path.join(dataset_dir, 'ADEChallengeData2016/images')
-  annotation_dir = os.path.join(dataset_dir, 'ADEChallengeData2016/annotations')
+  image_dir      = os.path.join(extracted_dir, 'images')
+  annotation_dir = os.path.join(extracted_dir, 'annotations')
   record_dir     = os.path.join(dataset_dir, 'records')
 
   if not tf.gfile.Exists(record_dir):
