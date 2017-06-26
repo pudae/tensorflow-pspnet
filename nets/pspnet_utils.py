@@ -67,7 +67,7 @@ def pyramid_pooling_module(inputs, levels, outputs_collections=None):
         level_map = level.fn(inputs, level_size, level_depth)
         level_maps.append(level_map)
 
-    net = tf.concat(3, level_maps)
+    net = tf.concat(axis=3, values=level_maps)
     net = slim.utils.collect_named_outputs(outputs_collections, sc.name, net)
 
   return net

@@ -138,15 +138,18 @@ def main(_):
     predictions = tf.squeeze(predictions)
 
     # Define the metrics:
-    names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
-        'Pixel ACC': slim.metrics.streaming_accuracy(predictions, labels),
-        'IOU': slim.metrics.streaming_mean_iou(predictions, labels, num_classes),
-    })
+    pixel_acc = tf.contrib.metrics.streaming_accuracy(predictions, labels)
+    mean_iou = tf.contrib.metrics.streaming_mean_iou(predictions, labels, num_classes)
+    names_to_values, names_to_updates =\
+        tf.contrib.metrics.aggregate_metric_map({
+          'Pixel ACC': pixel_acc,
+          'IOU': mean_iou
+        })
 
     # Print the summaries to screen.
-    for name, value in names_to_values.iteritems():
+    for name, value in names_to_values.items():
       summary_name = 'eval/%s' % name
-      op = tf.scalar_summary(summary_name, value, collections=[])
+      op = tf.summary.scalar(summary_name, value, collections=[])
       op = tf.Print(op, [value], summary_name)
       tf.add_to_collection(tf.GraphKeys.SUMMARIES, op)
 
@@ -164,7 +167,7 @@ def main(_):
         checkpoint_path=checkpoint_path,
         logdir=FLAGS.eval_dir,
         num_evals=num_batches,
-        eval_op=names_to_updates.values(),
+        eval_op=list(names_to_updates.values()),
         variables_to_restore=variables_to_restore)
 
 

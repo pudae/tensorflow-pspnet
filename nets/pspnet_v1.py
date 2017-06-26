@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 
 from operator import mul
+from functools import reduce
 
 import tensorflow as tf
 
@@ -123,9 +124,10 @@ def pspnet_v1_50(inputs,
   ]
 
   levels = [
-      pspnet_utils.Level('level1', pyramid_pooling, ((28, 28), 512)),
-      pspnet_utils.Level('level2', pyramid_pooling, ((14, 14), 512)),
-      pspnet_utils.Level('level3', pyramid_pooling, ((7, 7), 512)),
+      pspnet_utils.Level('level1', pyramid_pooling, ((60, 60), 512)),
+      pspnet_utils.Level('level2', pyramid_pooling, ((30, 30), 512)),
+      pspnet_utils.Level('level3', pyramid_pooling, ((20, 20), 512)),
+      pspnet_utils.Level('level4', pyramid_pooling, ((10, 10), 512)),
   ]
 
   return pspnet_v1(inputs, blocks, levels, num_classes, is_training,

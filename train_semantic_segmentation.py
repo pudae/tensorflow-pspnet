@@ -7,14 +7,31 @@ import tensorflow as tf
 
 from tensorflow.python.ops import control_flow_ops
 from datasets import dataset_factory
+from deployment import model_deploy
 from nets import nets_factory
 from preprocessing import preprocessing_factory
 
 slim = tf.contrib.slim
 
 tf.app.flags.DEFINE_string(
+    'master', '', 'The address of the TensorFlow master to use.')
+
+tf.app.flags.DEFINE_string(
     'train_dir', '/tmp/tfmodel/',
     'Directory where checkpoints and event logs are written to.')
+
+tf.app.flags.DEFINE_integer('num_clones', 4,
+                            'Number of model clones to deploy.')
+
+tf.app.flags.DEFINE_boolean('clone_on_cpu', False,
+                            'Use CPUs to deploy clones.')
+
+tf.app.flags.DEFINE_integer('worker_replicas', 1, 'Number of worker replicas.')
+
+tf.app.flags.DEFINE_integer(
+    'num_ps_tasks', 0,
+    'The number of parameter servers. If the value is 0, then the parameters '
+    'are handled locally by the worker.')
 
 tf.app.flags.DEFINE_integer(
     'num_readers', 4,
@@ -33,9 +50,11 @@ tf.app.flags.DEFINE_integer(
     'The frequency with which summaries are saved, in seconds.')
 
 tf.app.flags.DEFINE_integer(
-    'save_interval_secs', 600,
+    'save_interval_secs', 3600,
     'The frequency with which the model is saved, in seconds.')
 
+tf.app.flags.DEFINE_integer(
+    'task', 0, 'Task id of the replica running the training.')
 
 ######################
 # Optimization Flags #
@@ -151,7 +170,7 @@ tf.app.flags.DEFINE_integer(
     'batch_size', 32, 'The number of samples in each batch.')
 
 tf.app.flags.DEFINE_integer(
-    'train_image_size', None, 'Train image size')
+    'train_image_size', 473, 'Train image size')
 
 tf.app.flags.DEFINE_integer('max_number_of_steps', None,
                             'The maximum number of training steps.')
@@ -372,9 +391,20 @@ def main(_):
 
   tf.logging.set_verbosity(tf.logging.INFO)
   with tf.Graph().as_default():
+    #######################
+    # Config model_deploy #
+    #######################
+    deploy_config = model_deploy.DeploymentConfig(
+        num_clones=FLAGS.num_clones,
+        clone_on_cpu=FLAGS.clone_on_cpu,
+        replica_id=FLAGS.task,
+        num_replicas=FLAGS.worker_replicas,
+        num_ps_tasks=FLAGS.num_ps_tasks)
 
     # Create global_step
-    global_step = slim.create_global_step()
+    with tf.device(deploy_config.variables_device()):
+      global_step = slim.create_global_step()
+
 
     ######################
     # Select the dataset #
@@ -389,9 +419,9 @@ def main(_):
       class_map = _get_label_mapping_tensor(classes, dataset.num_classes)
       num_classes = len(classes) + 1
 
-    ####################
+    ######################
     # Select the network #
-    ####################
+    ######################
     network_fn = nets_factory.get_network_fn(
         FLAGS.model_name,
         num_classes=num_classes,
@@ -409,48 +439,56 @@ def main(_):
     ##############################################################
     # Create a dataset provider that loads data from the dataset #
     ##############################################################
-    provider = slim.dataset_data_provider.DatasetDataProvider(
-        dataset,
-        num_readers=FLAGS.num_readers,
-        common_queue_capacity=20 * FLAGS.batch_size,
-        common_queue_min=10 * FLAGS.batch_size)
-    [image, label] = provider.get(['image', 'label'])
+    with tf.device(deploy_config.inputs_device()):
+      provider = slim.dataset_data_provider.DatasetDataProvider(
+          dataset,
+          num_readers=FLAGS.num_readers,
+          common_queue_capacity=20 * FLAGS.batch_size,
+          common_queue_min=10 * FLAGS.batch_size)
+      [image, label] = provider.get(['image', 'label'])
 
-    train_image_size = FLAGS.train_image_size or network_fn.default_image_size
+      train_image_size = FLAGS.train_image_size or network_fn.default_image_size
 
-    image, label = image_preprocessing_fn(image, train_image_size, train_image_size,
-                                          label=label)
+      image, label = image_preprocessing_fn(image, train_image_size, train_image_size,
+                                            label=label)
 
-    images, labels = tf.train.batch(
-        [image, label],
-        batch_size=FLAGS.batch_size,
-        num_threads=FLAGS.num_preprocessing_threads,
-        capacity=5 * FLAGS.batch_size)
+      images, labels = tf.train.batch(
+          [image, label],
+          batch_size=FLAGS.batch_size,
+          num_threads=FLAGS.num_preprocessing_threads,
+          capacity=5 * FLAGS.batch_size)
 
-    labels = _filter_classes(labels, class_map)
-    labels = slim.one_hot_encoding(labels, num_classes)
+      labels = _filter_classes(labels, class_map)
+      labels = slim.one_hot_encoding(labels, num_classes)
 
-    batch_queue = slim.prefetch_queue.prefetch_queue([images, labels], capacity=2)
+      batch_queue = slim.prefetch_queue.prefetch_queue([images, labels], capacity=2)
+
 
     ####################
     # Define the model #
     ####################
-    images, labels = batch_queue.dequeue()
-    logits, end_points = network_fn(images)
-    labels = tf.reshape(labels, logits.get_shape())
+    def clone_fn(batch_queue):
+      images, labels = batch_queue.dequeue()
+      tf.logging.info('images get_shape {}'.format(images.get_shape()))
+      logits, end_points = network_fn(images)
+      labels = tf.reshape(labels, logits.get_shape())
 
-    #TODO
-    slim.losses.softmax_cross_entropy(
-        logits, labels, label_smoothing=FLAGS.label_smoothing, weight=1.0)
+      tf.losses.softmax_cross_entropy(
+          labels, logits, label_smoothing=FLAGS.label_smoothing)
+
+      return end_points
 
     # Gather initial summaries.
     summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES))
 
+    clones = model_deploy.create_clones(deploy_config, clone_fn, [batch_queue])
+    first_clone_scope = deploy_config.clone_scope(0)
     # Gather update_ops from the first clone. These contain, for example,
     # the updates for the batch_norm variables created by network_fn.
-    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, first_clone_scope)
 
     # Add summaries for end_points.
+    end_points = clones[0].outputs
     for end_point in end_points:
       x = end_points[end_point]
       summaries.add(tf.summary.histogram('activations/' + end_point, x))
@@ -458,12 +496,13 @@ def main(_):
                                       tf.nn.zero_fraction(x)))
 
     # Add summaries for losses.
-    for loss in tf.get_collection(tf.GraphKeys.LOSSES):
+    for loss in tf.get_collection(tf.GraphKeys.LOSSES, first_clone_scope):
       summaries.add(tf.summary.scalar('losses/%s' % loss.op.name, loss))
 
     # Add summaries for variables.
     for variable in slim.get_model_variables():
       summaries.add(tf.summary.histogram(variable.op.name, variable))
+
 
     #################################
     # Configure the moving averages #
@@ -478,11 +517,22 @@ def main(_):
     #########################################
     # Configure the optimization procedure. #
     #########################################
-    learning_rate = _configure_learning_rate(dataset.num_samples, global_step)
-    optimizer = _configure_optimizer(learning_rate)
-    summaries.add(tf.summary.scalar('learning_rate', learning_rate))
+    with tf.device(deploy_config.optimizer_device()):
+      learning_rate = _configure_learning_rate(dataset.num_samples, global_step)
+      optimizer = _configure_optimizer(learning_rate)
+      summaries.add(tf.summary.scalar('learning_rate', learning_rate))
 
-    if FLAGS.moving_average_decay:
+    if FLAGS.sync_replicas:
+      # If sync_replicas is enabled, the averaging will be done in the chief
+      # queue runner.
+      optimizer = tf.train.SyncReplicasOptimizer(
+          opt=optimizer,
+          replicas_to_aggregate=FLAGS.replicas_to_aggregate,
+          variable_averages=variable_averages,
+          variables_to_average=moving_average_variables,
+          replica_id=tf.constant(FLAGS.task, tf.int32, shape=()),
+          total_num_replicas=FLAGS.worker_replicas)
+    elif FLAGS.moving_average_decay:
       # Update ops executed locally by trainer.
       update_ops.append(variable_averages.apply(moving_average_variables))
 
@@ -490,29 +540,29 @@ def main(_):
     variables_to_train = _get_variables_to_train()
 
     #  and returns a train_tensor and summary_op
-    loss = tf.get_collection(tf.GraphKeys.LOSSES)
-    reg_loss = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-    total_loss = tf.add_n(loss + reg_loss)
-    gradients = optimizer.compute_gradients(total_loss, var_list=variables_to_train)
-
+    total_loss, clones_gradients = model_deploy.optimize_clones(
+        clones,
+        optimizer,
+        var_list=variables_to_train)
     # Add total_loss to summary.
     summaries.add(tf.summary.scalar('total_loss', total_loss))
 
     # Create gradient updates.
-    grad_updates = optimizer.apply_gradients(gradients,
+    grad_updates = optimizer.apply_gradients(clones_gradients,
                                              global_step=global_step)
     update_ops.append(grad_updates)
 
     update_op = tf.group(*update_ops)
-    train_tensor = control_flow_ops.with_dependencies([update_op], total_loss,
-                                                      name='train_op')
+    with tf.control_dependencies([update_op]):
+      train_tensor = tf.identity(total_loss, name='train_op')
 
     # Add the summaries from the first clone. These contain the summaries
     # created by model_fn and either optimize_clones() or _gather_clone_loss().
-    summaries |= set(tf.get_collection(tf.GraphKeys.SUMMARIES))
+    summaries |= set(tf.get_collection(tf.GraphKeys.SUMMARIES,
+                                       first_clone_scope))
 
     # Merge all summaries together.
-    summary_op = tf.merge_summary(list(summaries), name='summary_op')
+    summary_op = tf.summary.merge(list(summaries), name='summary_op')
 
     ###########################
     # Kicks off the training. #
@@ -520,12 +570,15 @@ def main(_):
     slim.learning.train(
         train_tensor,
         logdir=FLAGS.train_dir,
+        master=FLAGS.master,
+        is_chief=(FLAGS.task == 0),
         init_fn=_get_init_fn(),
         summary_op=summary_op,
         number_of_steps=FLAGS.max_number_of_steps,
         log_every_n_steps=FLAGS.log_every_n_steps,
         save_summaries_secs=FLAGS.save_summaries_secs,
-        save_interval_secs=FLAGS.save_interval_secs)
+        save_interval_secs=FLAGS.save_interval_secs,
+        sync_optimizer=optimizer if FLAGS.sync_replicas else None)
 
 
 if __name__ == '__main__':

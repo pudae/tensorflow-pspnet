@@ -12,7 +12,7 @@ _R_MEAN = 123.68
 _G_MEAN = 116.78
 _B_MEAN = 103.94
 
-_RESIZE_SIDE_MIN = 256
+_RESIZE_SIDE_MIN = 473
 _RESIZE_SIDE_MAX = 512
 
 
@@ -24,7 +24,7 @@ def _crop(image, offset_height, offset_width, crop_height, crop_width):
       ['Rank of image must be equal to 3.'])
   cropped_shape = control_flow_ops.with_dependencies(
       [rank_assertion],
-      tf.pack([crop_height, crop_width, original_shape[2]]))
+      tf.stack([crop_height, crop_width, original_shape[2]]))
 
   size_assertion = tf.Assert(
       tf.logical_and(
@@ -32,7 +32,7 @@ def _crop(image, offset_height, offset_width, crop_height, crop_width):
           tf.greater_equal(original_shape[1], crop_width)),
       ['Crop size greater than the image size.'])
 
-  offsets = tf.to_int32(tf.pack([offset_height, offset_width, 0]))
+  offsets = tf.to_int32(tf.stack([offset_height, offset_width, 0]))
 
   # Use tf.slice instead of crop_to_bounding box as it accepts tensors to
   # define the crop size.
@@ -132,10 +132,10 @@ def _mean_image_subtraction(image, means):
   if len(means) != num_channels:
     raise ValueError('len(means) must match the number of channels')
 
-  channels = tf.split(2, num_channels, image)
+  channels = tf.split(axis=2, num_or_size_splits=num_channels, value=image)
   for i in range(num_channels):
     channels[i] -= means[i]
-  return tf.concat(2, channels)
+  return tf.concat(axis=2, values=channels)
 
 
 def _smallest_size_at_least(height, width, smallest_side):
@@ -160,6 +160,8 @@ def _aspect_preserving_resize(image, label, smallest_side):
   height = shape[0]
   width = shape[1]
   new_height, new_width = _smallest_size_at_least(height, width, smallest_side)
+  new_height = tf.maximum(new_height, smallest_side)
+  new_width = tf.maximum(new_width, smallest_side)
 
   image = tf.expand_dims(image, 0)
   resized_image = tf.image.resize_bilinear(image, [new_height, new_width],
