@@ -175,10 +175,6 @@ tf.app.flags.DEFINE_integer(
 tf.app.flags.DEFINE_integer('max_number_of_steps', None,
                             'The maximum number of training steps.')
 
-tf.app.flags.DEFINE_string(
-    'classes', None,
-    'The classes to classify.')
-
 #####################
 # Fine-Tuning Flags #
 #####################
@@ -371,20 +367,6 @@ def _get_variables_to_train():
   return variables_to_train
 
 
-def _get_label_mapping_tensor(classes, num_classes):
-  tbl = np.zeros(num_classes + 1)
-  for i, c in enumerate(classes):
-    tbl[c] = i + 1
-  return tf.constant(tbl, dtype=tf.int32)
-
-
-def _filter_classes(labels, mapping):
-  if mapping is None:
-    return labels
-
-  return tf.gather(mapping, labels)
-
-
 def main(_):
   if not FLAGS.dataset_dir:
     raise ValueError('You must supply the dataset directory with --dataset_dir')
@@ -413,11 +395,6 @@ def main(_):
         FLAGS.dataset_name, FLAGS.dataset_split_name, FLAGS.dataset_dir)
 
     num_classes = dataset.num_classes
-    class_map = None
-    if FLAGS.classes is not None:
-      classes = [int(c) for c in FLAGS.classes.split(',')]
-      class_map = _get_label_mapping_tensor(classes, dataset.num_classes)
-      num_classes = len(classes) + 1
 
     ######################
     # Select the network #
@@ -458,7 +435,6 @@ def main(_):
           num_threads=FLAGS.num_preprocessing_threads,
           capacity=5 * FLAGS.batch_size)
 
-      labels = _filter_classes(labels, class_map)
       labels = slim.one_hot_encoding(labels, num_classes)
 
       batch_queue = slim.prefetch_queue.prefetch_queue([images, labels], capacity=2)

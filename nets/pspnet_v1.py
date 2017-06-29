@@ -12,6 +12,7 @@ from nets import pspnet_utils
 pspnet_arg_scope = pspnet_utils.pspnet_arg_scope
 slim = tf.contrib.slim
 
+@slim.add_arg_scope
 def root_block(inputs, scope=None):
   # conv     3x3, out depth  64, stride 2
   # conv     3x3, out depth  64, stride 1

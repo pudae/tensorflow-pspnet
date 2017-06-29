@@ -70,10 +70,10 @@ def _mean_image_subtraction(image, means):
   if len(means) != num_channels:
     raise ValueError('len(means) must match the number of channels')
 
-  channels = tf.split(2, num_channels, image)
+  channels = tf.split(image, num_channels, 2)
   for i in range(num_channels):
     channels[i] -= means[i]
-  return tf.concat(2, channels)
+  return tf.concat(channels, 2)
 
 
 def _mean_image_subtraction2(image):
@@ -113,6 +113,10 @@ def main(_):
     ####################
     logits, _ = network_fn(images)
     variables_to_restore = slim.get_variables_to_restore()
+
+    for v in variables_to_restore:
+      print(v)
+    return
 
     # predictions = tf.argmax(logits, 1)
     predictions = tf.argmax(logits, 3)
