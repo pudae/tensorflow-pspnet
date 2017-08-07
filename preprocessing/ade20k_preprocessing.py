@@ -13,7 +13,52 @@ _G_MEAN = 116.78
 _B_MEAN = 103.94
 
 _RESIZE_SIDE_MIN = 473
-_RESIZE_SIDE_MAX = 512
+_RESIZE_SIDE_MAX = 1024
+
+
+def _apply_with_random_selector(x, func, num_cases):
+  sel = tf.random_uniform([], maxval=num_cases, dtype=tf.int32)
+  # Pass the real x only to one of the func calls.
+  return control_flow_ops.merge([
+      func(control_flow_ops.switch(x, tf.equal(sel, case))[1], case)
+      for case in range(num_cases)])[0]
+
+
+def _distort_color(image, color_ordering=0, fast_mode=True, scope=None):
+  with tf.name_scope(scope, 'distort_color', [image]):
+    if fast_mode:
+      if color_ordering == 0:
+        image = tf.image.random_brightness(image, max_delta=32. / 255.)
+        image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
+      else:
+        image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
+        image = tf.image.random_brightness(image, max_delta=32. / 255.)
+    else:
+      if color_ordering == 0:
+        image = tf.image.random_brightness(image, max_delta=32. / 255.)
+        image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
+        image = tf.image.random_hue(image, max_delta=0.2)
+        image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
+      elif color_ordering == 1:
+        image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
+        image = tf.image.random_brightness(image, max_delta=32. / 255.)
+        image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
+        image = tf.image.random_hue(image, max_delta=0.2)
+      elif color_ordering == 2:
+        image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
+        image = tf.image.random_hue(image, max_delta=0.2)
+        image = tf.image.random_brightness(image, max_delta=32. / 255.)
+        image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
+      elif color_ordering == 3:
+        image = tf.image.random_hue(image, max_delta=0.2)
+        image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
+        image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
+        image = tf.image.random_brightness(image, max_delta=32. / 255.)
+      else:
+        raise ValueError('color_ordering must be in [0, 3]')
+
+    # The random_* ops do not necessarily clamp.
+    return tf.clip_by_value(image, 0.0, 1.0)
 
 
 def _crop(image, offset_height, offset_width, crop_height, crop_width):
@@ -183,6 +228,10 @@ def preprocess_for_train(image,
                          output_width,
                          resize_side_min=_RESIZE_SIDE_MIN,
                          resize_side_max=_RESIZE_SIDE_MAX):
+
+  if image.dtype != tf.float32:
+    image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+
   resize_side = tf.random_uniform(
       [], minval=resize_side_min, maxval=resize_side_max+1, dtype=tf.int32)
 
@@ -203,10 +252,18 @@ def preprocess_for_train(image,
   image = tf.cond(val_ud > 0.5, lambda: tf.image.flip_up_down(image), lambda: image)
   label = tf.cond(val_ud > 0.5, lambda: tf.image.flip_up_down(label), lambda: label)
 
-  return _mean_image_subtraction(image, [_R_MEAN, _G_MEAN, _B_MEAN]), label
+  image = _apply_with_random_selector(
+      image,
+      lambda x, ordering: _distort_color(x, ordering, fast_mode=True),
+      num_cases=4)
+
+  return image, label
 
 
 def preprocess_for_eval(image, label, output_height, output_width, resize_side):
+  if image.dtype != tf.float32:
+    image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+
   image, label = _aspect_preserving_resize(image, label, resize_side)
   cropped_images, cropped_labels = _central_crop([image], [label], output_height, output_width)
   image = cropped_images[0]
@@ -218,7 +275,7 @@ def preprocess_for_eval(image, label, output_height, output_width, resize_side):
   image = tf.to_float(image)
   label = tf.to_int32(label)
 
-  return _mean_image_subtraction(image, [_R_MEAN, _G_MEAN, _B_MEAN]), label
+  return image, label
 
 
 def preprocess_image(image, output_height, output_width,

@@ -213,8 +213,10 @@ def _configure_learning_rate(num_samples_per_epoch, global_step):
   Raises:
     ValueError: if
   """
-  decay_steps = int(num_samples_per_epoch / FLAGS.batch_size *
+  decay_steps = int(num_samples_per_epoch /
+                    (FLAGS.batch_size * FLAGS.num_clones) *
                     FLAGS.num_epochs_per_decay)
+
   if FLAGS.sync_replicas:
     decay_steps /= FLAGS.replicas_to_aggregate
 
@@ -232,7 +234,7 @@ def _configure_learning_rate(num_samples_per_epoch, global_step):
                                      global_step,
                                      decay_steps,
                                      FLAGS.end_learning_rate,
-                                     power=0.9,
+                                     power=FLAGS.learning_rate_decay_factor,
                                      cycle=False,
                                      name='polynomial_decay_learning_rate')
   else:
